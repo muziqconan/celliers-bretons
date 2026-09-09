@@ -158,7 +158,7 @@ async function sbUpsert(table, rows, conflictCols) {
   }
 }
 
-const BUILD_VERSION = "20260909-1242";
+const BUILD_VERSION = "20260909-1556";
 
 const SOCIETE = {
   nom: "Les Celliers Bretons",
@@ -1523,6 +1523,59 @@ function buildClientsWithOrders(clientsRaw, commandes, monthsOrder) {
   });
 }
 
+// Grilles de gratuite courantes, pour proposer le montage le plus proche d'une remise constatee
+function gcd(a, b) { return b === 0 ? a : gcd(b, a % b); }
+
+// Seuil en-dessous duquel une ligne de commande est consideree comme "consigne seule"
+// (carton offert, seul le depot du verre a ete facture) plutot qu'un vrai prix produit.
+const CONSIGNE_SEUIL = 2;
+
+function buildTarifsClient(clientId, commandes, catalogue) {
+  const catByCode = {};
+  catalogue.forEach((p) => { catByCode[p.code] = p; });
+
+  const byProduct = {};
+  commandes.forEach((r) => {
+    if (r.client_nom_norm !== clientId || !r.quantite) return;
+    if (!byProduct[r.code_produit]) byProduct[r.code_produit] = { nom: r.designation, paidQty: 0, paidMontant: 0, freeQty: 0 };
+    const pu = r.montant / r.quantite;
+    const entry = byProduct[r.code_produit];
+    if (pu < CONSIGNE_SEUIL) {
+      entry.freeQty += r.quantite;
+    } else {
+      entry.paidQty += r.quantite;
+      entry.paidMontant += r.montant;
+    }
+  });
+
+  return Object.entries(byProduct).map(([code, d]) => {
+    const cat = catByCode[code];
+    const qteCarton = cat ? (cat.qte_carton || 1) : 1;
+    const prixGeneralUnite = cat ? (cat.prix_unitaire_ht || (cat.prix_ht / qteCarton)) : null;
+    const prixDedieUnite = cat && cat.tarif_dedie ? cat.prix_unitaire_dedie : null;
+    const prixPayeUnite = d.paidQty > 0 ? d.paidMontant / (d.paidQty * qteCarton) : null;
+
+    let type = "standard";
+    let remisePct = 0;
+    if (prixPayeUnite != null && prixDedieUnite && Math.abs(prixPayeUnite - prixDedieUnite) / prixDedieUnite < 0.03) {
+      type = "brasserie";
+    } else if (prixPayeUnite != null && prixGeneralUnite > 0 && prixPayeUnite < prixGeneralUnite * 0.97) {
+      type = "privilegie";
+      remisePct = (1 - prixPayeUnite / prixGeneralUnite) * 100;
+    }
+
+    let gratuite = null;
+    if (d.freeQty > 0 && d.paidQty > 0) {
+      const g = gcd(Math.round(d.paidQty), Math.round(d.freeQty));
+      gratuite = { label: (d.paidQty / g) + "+" + (d.freeQty / g), paidQty: d.paidQty, freeQty: d.freeQty };
+    } else if (d.freeQty > 0) {
+      gratuite = { label: null, paidQty: 0, freeQty: d.freeQty };
+    }
+
+    return { code, nom: d.nom, prixPayeUnite, prixGeneralUnite, prixDedieUnite, type, remisePct, gratuite };
+  }).filter((x) => x.prixPayeUnite != null || x.gratuite);
+}
+
 function buildClientInsights(client, monthsOrder) {
   if (!client || !client.prod || client.prod.length === 0) return [];
   const byCat = {};
@@ -1590,6 +1643,8 @@ function SuiviClientsApp({ onLogout }) {
   const [selectedId, setSelectedId] = useState(null);
   const [viewMode, setViewMode] = useState("actifs"); // actifs | sans_stats | prospects | supprimes
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [showTarifs, setShowTarifs] = useState(false);
+  useEffect(() => { setShowTarifs(false); }, [selectedId]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -1972,18 +2027,77 @@ function SuiviClientsApp({ onLogout }) {
 
                   {selected.lat && selected.lon ? (
                     <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                      <a href={wazeUrl(selected.lat, selected.lon)} target="_blank" rel="noreferrer" style={{ fontSize: 12.5, background: PALETTE.bottle, color: "#fff", padding: "8px 14px", borderRadius: 7, textDecoration: "none", fontWeight: 500 }}>
+                      <a href={wazeUrl(selected.lat, selected.lon)} target="_blank" rel="noreferrer" style={{ fontSize: 12.5, background: PALETTE.bottle, color: "#fff", padding: "8px 14px", borderRadius: 19, textDecoration: "none", fontWeight: 500, display: "inline-flex", alignItems: "center" }}>
                         Itineraire Waze
                       </a>
-                      <a href={gmapsUrl(selected.lat, selected.lon)} target="_blank" rel="noreferrer" style={{ fontSize: 12.5, background: PALETTE.goldDark, color: "#fff", padding: "8px 14px", borderRadius: 7, textDecoration: "none", fontWeight: 500 }}>
+                      <a href={gmapsUrl(selected.lat, selected.lon)} target="_blank" rel="noreferrer" style={{ fontSize: 12.5, background: PALETTE.goldDark, color: "#fff", padding: "8px 14px", borderRadius: 19, textDecoration: "none", fontWeight: 500, display: "inline-flex", alignItems: "center" }}>
                         Google Maps
                       </a>
+                      {selected.prod.length > 0 && (
+                        <button onClick={() => setShowTarifs((v) => !v)} style={secondaryBtnStyle}>
+                          {showTarifs ? "Masquer les tarifs" : "Tarifs"}
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <div style={{ fontSize: 11.5, color: PALETTE.inkSoft, marginTop: 10, fontStyle: "italic" }}>
                       Pas encore localise &mdash; utilisez le bouton de localisation dans l'onglet Importer.
                     </div>
                   )}
+
+                  {showTarifs && (() => {
+                    const tarifs = buildTarifsClient(selected.id, commandes, catalogue);
+                    if (tarifs.length === 0) {
+                      return (
+                        <div style={{ marginTop: 12, fontSize: 12, color: PALETTE.inkSoft, fontStyle: "italic" }}>
+                          Pas assez de donnees de commande pour calculer les tarifs.
+                        </div>
+                      );
+                    }
+                    return (
+                      <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+                        {tarifs.map((t, i) => (
+                          <div key={i} style={{ border: "1px solid " + PALETTE.line, borderRadius: 10, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+                            <div>
+                              <div style={{ fontSize: 12.5, fontWeight: 500, color: PALETTE.ink }}>{t.nom}</div>
+                              {t.prixPayeUnite != null && (
+                                <div style={{ fontSize: 11, color: PALETTE.inkSoft }}>
+                                  Paye : {fmtEuro(t.prixPayeUnite)} / unite
+                                  {t.prixGeneralUnite ? " (tarif general : " + fmtEuro(t.prixGeneralUnite) + ")" : ""}
+                                </div>
+                              )}
+                            </div>
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                              {t.type === "brasserie" && (
+                                <span style={{ fontSize: 11, background: "#DCEAF5", color: "#2E5F82", padding: "3px 10px", borderRadius: 20, fontWeight: 600 }}>Tarif brasserie</span>
+                              )}
+                              {t.type === "privilegie" && (
+                                <span style={{ fontSize: 11, background: "#E2E7DA", color: PALETTE.bottle, padding: "3px 10px", borderRadius: 20, fontWeight: 600 }}>
+                                  Tarif privilegie : -{t.remisePct.toFixed(0)}%
+                                </span>
+                              )}
+                              {t.gratuite && t.gratuite.label && (
+                                <span title={t.gratuite.paidQty + " cartons payes, " + t.gratuite.freeQty + " offerts sur tout l'historique"} style={{ fontSize: 11, background: "#F7EFD9", color: "#8A6425", padding: "3px 10px", borderRadius: 20, fontWeight: 600 }}>
+                                  Gratuite : {t.gratuite.label}
+                                </span>
+                              )}
+                              {t.gratuite && !t.gratuite.label && (
+                                <span title={t.gratuite.freeQty + " cartons a prix consigne seule, jamais achete a prix plein sur la periode"} style={{ fontSize: 11, background: "#F7EFD9", color: "#8A6425", padding: "3px 10px", borderRadius: 20, fontWeight: 600 }}>
+                                  {t.gratuite.freeQty} carton(s) consigne seule
+                                </span>
+                              )}
+                              {t.type === "standard" && !t.gratuite && (
+                                <span style={{ fontSize: 11, color: PALETTE.inkSoft }}>Tarif standard</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                        <div style={{ fontSize: 10.5, color: PALETTE.inkSoft, fontStyle: "italic", marginTop: 2 }}>
+                          Gratuites calculees a partir des lignes de commande facturees a la seule consigne (moins de {fmtEuro(CONSIGNE_SEUIL)}/carton), cumulees sur {monthsOrder.length} mois d'historique. Ratio reel, pas une estimation.
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <ClientNotesPanel client={selected} onClientUpdated={() => setReloadKey((k) => k + 1)} />
 
