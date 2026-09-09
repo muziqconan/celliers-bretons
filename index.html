@@ -155,7 +155,7 @@ async function sbUpsert(table, rows, conflictCols) {
   }
 }
 
-const BUILD_VERSION = "20260909-1139";
+const BUILD_VERSION = "20260909-1159";
 
 const SOCIETE = {
   nom: "Les Celliers Bretons",
@@ -1105,23 +1105,29 @@ function CartePane({ clients, isMobile, onSelectClient }) {
           {center ? "Clients les plus proches de " + centerLabel : geocoded.length + " client(s) localise(s)"}
         </div>
         <div style={{ maxHeight: 540, overflowY: "auto" }}>
-          {(center ? nearest : geocoded).map((c) => (
-            <div key={c.id} style={{ padding: "8px 4px", borderBottom: "1px solid " + PALETTE.line }}>
-              <div
-                onClick={() => onSelectClient && onSelectClient(c)}
-                style={{ fontSize: 13, fontWeight: 500, color: PALETTE.ink, cursor: onSelectClient ? "pointer" : "default", textDecoration: onSelectClient ? "underline" : "none" }}
-              >
-                {c.nom}
+          {(center ? nearest : geocoded).map((c) => {
+            const isAlert = c.joursDepuis !== null && c.joursDepuis !== undefined && c.joursDepuis >= 45;
+            const isProspect = c.statut === "prospect";
+            const isMine = (c.commercial || "Pierre") === "Pierre";
+            const statusColor = isProspect ? "#2E5F82" : isAlert ? "#A8462F" : isMine ? "#3E4E31" : "#B8863B";
+            return (
+              <div key={c.id} style={{ padding: "8px 4px 8px 10px", borderBottom: "1px solid " + PALETTE.line, borderLeft: "3px solid " + statusColor }}>
+                <div
+                  onClick={() => onSelectClient && onSelectClient(c)}
+                  style={{ fontSize: 13, fontWeight: 500, color: PALETTE.ink, cursor: onSelectClient ? "pointer" : "default", textDecoration: onSelectClient ? "underline" : "none" }}
+                >
+                  {c.nom_public || c.nom}
+                </div>
+                <div style={{ fontSize: 11.5, color: PALETTE.inkSoft, marginBottom: 4 }}>
+                  {c.ville} {c.dist !== undefined ? "\u00b7 " + c.dist.toFixed(1) + " km" : ""}
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <a href={wazeUrl(c.lat, c.lon)} target="_blank" rel="noreferrer" style={{ fontSize: 11, background: PALETTE.bottle, color: "#fff", padding: "3px 8px", borderRadius: 5, textDecoration: "none" }}>Waze</a>
+                  <a href={gmapsUrl(c.lat, c.lon)} target="_blank" rel="noreferrer" style={{ fontSize: 11, background: PALETTE.goldDark, color: "#fff", padding: "3px 8px", borderRadius: 5, textDecoration: "none" }}>Google Maps</a>
+                </div>
               </div>
-              <div style={{ fontSize: 11.5, color: PALETTE.inkSoft, marginBottom: 4 }}>
-                {c.ville} {c.dist !== undefined ? "\u00b7 " + c.dist.toFixed(1) + " km" : ""}
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <a href={wazeUrl(c.lat, c.lon)} target="_blank" rel="noreferrer" style={{ fontSize: 11, background: PALETTE.bottle, color: "#fff", padding: "3px 8px", borderRadius: 5, textDecoration: "none" }}>Waze</a>
-                <a href={gmapsUrl(c.lat, c.lon)} target="_blank" rel="noreferrer" style={{ fontSize: 11, background: PALETTE.goldDark, color: "#fff", padding: "3px 8px", borderRadius: 5, textDecoration: "none" }}>Google Maps</a>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
@@ -1629,6 +1635,10 @@ function SuiviClientsApp({ onLogout }) {
             else if (c.statut === "prospect") setViewMode("prospects");
             else if (c.prod.length === 0) setViewMode("sans_stats");
             else setViewMode("actifs");
+            setSearch("");
+            setDeptFilter("TOUS");
+            setCommFilter("TOUS");
+            setCommercialFilter("TOUS");
             setTab("clients");
           }}
         />
