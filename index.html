@@ -155,7 +155,7 @@ async function sbUpsert(table, rows, conflictCols) {
   }
 }
 
-const BUILD_VERSION = "20260909-1159";
+const BUILD_VERSION = "20260909-1213";
 
 const SOCIETE = {
   nom: "Les Celliers Bretons",
@@ -1513,7 +1513,8 @@ function SuiviClientsApp({ onLogout }) {
     if (!selectedId && filtered.length) setSelectedId(filtered[0].id);
   }, [filtered, selectedId]);
 
-  useEffect(() => { setSelectedId(null); }, [viewMode]);
+  // (le reset de selectedId se fait desormais directement dans chaque bouton de changement de vue,
+  // pas ici, pour ne pas ecraser la selection faite depuis un clic sur la carte)
 
   const selected = filtered.find((c) => c.id === selectedId) || filtered[0];
 
@@ -1702,22 +1703,22 @@ function SuiviClientsApp({ onLogout }) {
                 </div>
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   {viewMode !== "actifs" && (
-                    <button onClick={() => setViewMode("actifs")} style={{ fontSize: 11.5, background: "transparent", border: "1px solid " + PALETTE.line, borderRadius: 6, padding: "3px 8px", cursor: "pointer", color: PALETTE.inkSoft }}>
+                    <button onClick={() => { setViewMode("actifs"); setSelectedId(null); }} style={{ fontSize: 11.5, background: "transparent", border: "1px solid " + PALETTE.line, borderRadius: 6, padding: "3px 8px", cursor: "pointer", color: PALETTE.inkSoft }}>
                       Retour aux clients actifs
                     </button>
                   )}
                   {viewMode !== "sans_stats" && (
-                    <button onClick={() => setViewMode("sans_stats")} style={{ fontSize: 11.5, background: "transparent", border: "1px solid " + PALETTE.line, borderRadius: 6, padding: "3px 8px", cursor: "pointer", color: PALETTE.inkSoft }}>
+                    <button onClick={() => { setViewMode("sans_stats"); setSelectedId(null); }} style={{ fontSize: 11.5, background: "transparent", border: "1px solid " + PALETTE.line, borderRadius: 6, padding: "3px 8px", cursor: "pointer", color: PALETTE.inkSoft }}>
                       Sans commande ({clients.filter((c) => !deletedIds.includes(c.id) && c.statut !== "prospect" && c.prod.length === 0).length})
                     </button>
                   )}
                   {viewMode !== "prospects" && (
-                    <button onClick={() => setViewMode("prospects")} style={{ fontSize: 11.5, background: "transparent", border: "1px solid #B8D4E8", borderRadius: 6, padding: "3px 8px", cursor: "pointer", color: "#2E5F82" }}>
+                    <button onClick={() => { setViewMode("prospects"); setSelectedId(null); }} style={{ fontSize: 11.5, background: "transparent", border: "1px solid #B8D4E8", borderRadius: 6, padding: "3px 8px", cursor: "pointer", color: "#2E5F82" }}>
                       Prospects ({clients.filter((c) => !deletedIds.includes(c.id) && c.statut === "prospect").length})
                     </button>
                   )}
                   {viewMode !== "supprimes" && (
-                    <button onClick={() => setViewMode("supprimes")} style={{ fontSize: 11.5, background: "transparent", border: "1px solid " + PALETTE.line, borderRadius: 6, padding: "3px 8px", cursor: "pointer", color: PALETTE.inkSoft }}>
+                    <button onClick={() => { setViewMode("supprimes"); setSelectedId(null); }} style={{ fontSize: 11.5, background: "transparent", border: "1px solid " + PALETTE.line, borderRadius: 6, padding: "3px 8px", cursor: "pointer", color: PALETTE.inkSoft }}>
                       Fiches supprimees ({deletedIds.length})
                     </button>
                   )}
