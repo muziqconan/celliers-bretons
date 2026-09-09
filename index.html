@@ -155,7 +155,7 @@ async function sbUpsert(table, rows, conflictCols) {
   }
 }
 
-const BUILD_VERSION = "20260909-1221";
+const BUILD_VERSION = "20260909-1227";
 
 const SOCIETE = {
   nom: "Les Celliers Bretons",
@@ -277,6 +277,37 @@ function ClientNotesPanel({ client, onClientUpdated }) {
   const [form, setForm] = useState({ rue: "", cp: "", tel: "", mob: "", email: "", gerant: "", nom_public: "", commercial: "" });
   const [visitDate, setVisitDate] = useState(todayStr());
   const [visitObs, setVisitObs] = useState("");
+  const [listening, setListening] = useState(false);
+  const recognitionRef = useRef(null);
+  const speechSupported = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
+
+  function toggleDictation() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    if (listening) {
+      recognitionRef.current && recognitionRef.current.stop();
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "fr-FR";
+    rec.continuous = true;
+    rec.interimResults = false;
+    const baseText = visitObs.trim();
+    rec.onresult = (e) => {
+      let addition = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) addition += e.results[i][0].transcript;
+      }
+      if (addition.trim()) {
+        setVisitObs((prev) => (prev.trim() ? prev.trim() + " " : "") + addition.trim());
+      }
+    };
+    rec.onerror = () => setListening(false);
+    rec.onend = () => setListening(false);
+    recognitionRef.current = rec;
+    rec.start();
+    setListening(true);
+  }
   const [saveError, setSaveError] = useState("");
 
   const idEnc = encodeURIComponent(client.nom_norm);
@@ -419,6 +450,21 @@ function ClientNotesPanel({ client, onClientUpdated }) {
       <div style={{ display: "flex", gap: 6, marginBottom: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
         <input type="date" value={visitDate} onChange={(e) => setVisitDate(e.target.value)} style={{ ...inputStyle, flex: "0 0 140px" }} />
         <input placeholder="Observations de la visite..." value={visitObs} onChange={(e) => setVisitObs(e.target.value)} style={{ ...inputStyle, flex: "1 1 160px" }} />
+        {speechSupported && (
+          <button
+            type="button"
+            onClick={toggleDictation}
+            title={listening ? "Arreter la dictee" : "Dicter au micro"}
+            style={{
+              fontSize: 14, padding: "7px 12px", borderRadius: 7, cursor: "pointer",
+              border: "1px solid " + (listening ? PALETTE.rust : PALETTE.line),
+              background: listening ? PALETTE.rust : "transparent",
+              color: listening ? "#fff" : PALETTE.inkSoft,
+            }}
+          >
+            {listening ? "\u23f9 Enregistrement..." : "\ud83c\udfa4 Dicter"}
+          </button>
+        )}
         <button onClick={addVisit} style={primaryBtnStyle}>Ajouter</button>
       </div>
 
@@ -1415,26 +1461,45 @@ function buildClientInsights(client, monthsOrder) {
   const byCat = {};
   client.prod.forEach((p) => {
     const cat = p.cat || "Autres";
-    if (!byCat[cat]) byCat[cat] = new Array(monthsOrder.length).fill(0);
-    p.h.forEach((v, i) => { byCat[cat][i] += v; });
+    if (!byCat[cat]) byCat[cat] = { h: new Array(monthsOrder.length).fill(0), products: [] };
+    p.h.forEach((v, i) => { byCat[cat].h[i] += v; });
+    byCat[cat].products.push(p);
   });
-  const insights = [];
-  Object.entries(byCat).forEach(([cat, h]) => {
+
+  function lastOrderInfo(h) {
     const total = h.reduce((s, v) => s + v, 0);
     let lastIdx = null;
     for (let i = h.length - 1; i >= 0; i--) { if (h[i] > 0) { lastIdx = i; break; } }
-    if (lastIdx === null) return;
-    const monthsSince = h.length - 1 - lastIdx;
-    if (monthsSince >= 3 && total >= 2) {
-      insights.push({
-        cat,
-        monthsSince,
-        lastLabel: monthLabel(monthsOrder[lastIdx].y, monthsOrder[lastIdx].m),
+    if (lastIdx === null) return null;
+    return { total, monthsSince: h.length - 1 - lastIdx, lastLabel: monthLabel(monthsOrder[lastIdx].y, monthsOrder[lastIdx].m) };
+  }
+
+  const stopped = [];
+  const switched = [];
+
+  Object.entries(byCat).forEach(([cat, data]) => {
+    const catInfo = lastOrderInfo(data.h);
+    if (!catInfo) return;
+    const catIsQuiet = catInfo.monthsSince >= 3 && catInfo.total >= 2;
+
+    if (catIsQuiet) {
+      // toute la categorie s'est arretee : alerte forte
+      stopped.push({ cat, monthsSince: catInfo.monthsSince, lastLabel: catInfo.lastLabel });
+    } else {
+      // la categorie est toujours active : on regarde si un produit precis a ete abandonne
+      // (signe probable d'un changement de marque, pas d'un vrai decrochage)
+      data.products.forEach((p) => {
+        const pInfo = lastOrderInfo(p.h);
+        if (pInfo && pInfo.monthsSince >= 3 && pInfo.total >= 2) {
+          switched.push({ cat, produit: p.n, monthsSince: pInfo.monthsSince, lastLabel: pInfo.lastLabel });
+        }
       });
     }
   });
-  insights.sort((a, b) => b.monthsSince - a.monthsSince);
-  return insights;
+
+  stopped.sort((a, b) => b.monthsSince - a.monthsSince);
+  switched.sort((a, b) => b.monthsSince - a.monthsSince);
+  return { stopped, switched };
 }
 
 function SuiviClientsApp({ onLogout }) {
@@ -1850,18 +1915,34 @@ function SuiviClientsApp({ onLogout }) {
                   <ClientNotesPanel client={selected} onClientUpdated={() => setReloadKey((k) => k + 1)} />
 
                   {(() => {
-                    const insights = buildClientInsights(selected, monthsOrder);
-                    if (insights.length === 0) return null;
+                    const { stopped, switched } = buildClientInsights(selected, monthsOrder);
+                    if (stopped.length === 0 && switched.length === 0) return null;
                     return (
-                      <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, background: PALETTE.rustBg, border: "1px solid #E3C7BC" }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 600, color: PALETTE.rust, marginBottom: 4 }}>A surveiller</div>
-                        <ul style={{ margin: 0, paddingLeft: 18 }}>
-                          {insights.map((ins, i) => (
-                            <li key={i} style={{ fontSize: 12, color: "#7A3624", marginBottom: 2 }}>
-                              N'achete plus de <strong>{ins.cat}</strong> depuis {ins.monthsSince} mois (derniere commande : {ins.lastLabel})
-                            </li>
-                          ))}
-                        </ul>
+                      <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+                        {stopped.length > 0 && (
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: PALETTE.rustBg, border: "1px solid #E3C7BC" }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 600, color: PALETTE.rust, marginBottom: 4 }}>A surveiller</div>
+                            <ul style={{ margin: 0, paddingLeft: 18 }}>
+                              {stopped.map((ins, i) => (
+                                <li key={i} style={{ fontSize: 12, color: "#7A3624", marginBottom: 2 }}>
+                                  N'achete plus de <strong>{ins.cat}</strong> depuis {ins.monthsSince} mois (derniere commande : {ins.lastLabel})
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {switched.length > 0 && (
+                          <div style={{ padding: "10px 12px", borderRadius: 8, background: "#F7EFD9", border: "1px solid #E6D5A3" }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 600, color: "#8A6425", marginBottom: 4 }}>Peut-etre un changement de marque</div>
+                            <ul style={{ margin: 0, paddingLeft: 18 }}>
+                              {switched.map((ins, i) => (
+                                <li key={i} style={{ fontSize: 12, color: "#6B5220", marginBottom: 2 }}>
+                                  Ne prend plus <strong>{ins.produit}</strong> depuis {ins.monthsSince} mois, mais achete toujours de la {ins.cat.toLowerCase()} (derniere commande de ce produit : {ins.lastLabel})
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
