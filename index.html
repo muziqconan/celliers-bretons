@@ -155,7 +155,7 @@ async function sbUpsert(table, rows, conflictCols) {
   }
 }
 
-const BUILD_VERSION = "20260909-1213";
+const BUILD_VERSION = "20260909-1221";
 
 const SOCIETE = {
   nom: "Les Celliers Bretons",
@@ -1410,6 +1410,33 @@ function buildClientsWithOrders(clientsRaw, commandes, monthsOrder) {
   });
 }
 
+function buildClientInsights(client, monthsOrder) {
+  if (!client || !client.prod || client.prod.length === 0) return [];
+  const byCat = {};
+  client.prod.forEach((p) => {
+    const cat = p.cat || "Autres";
+    if (!byCat[cat]) byCat[cat] = new Array(monthsOrder.length).fill(0);
+    p.h.forEach((v, i) => { byCat[cat][i] += v; });
+  });
+  const insights = [];
+  Object.entries(byCat).forEach(([cat, h]) => {
+    const total = h.reduce((s, v) => s + v, 0);
+    let lastIdx = null;
+    for (let i = h.length - 1; i >= 0; i--) { if (h[i] > 0) { lastIdx = i; break; } }
+    if (lastIdx === null) return;
+    const monthsSince = h.length - 1 - lastIdx;
+    if (monthsSince >= 3 && total >= 2) {
+      insights.push({
+        cat,
+        monthsSince,
+        lastLabel: monthLabel(monthsOrder[lastIdx].y, monthsOrder[lastIdx].m),
+      });
+    }
+  });
+  insights.sort((a, b) => b.monthsSince - a.monthsSince);
+  return insights;
+}
+
 function SuiviClientsApp({ onLogout }) {
   const isMobile = useIsMobile();
   const [loading, setLoading] = useState(true);
@@ -1557,9 +1584,9 @@ function SuiviClientsApp({ onLogout }) {
 
   const deptCounts = useMemo(() => {
     const m = {};
-    clients.forEach((c) => { if (c.dept) m[c.dept] = (m[c.dept] || 0) + 1; });
+    clients.forEach((c) => { if (c.dept && c.statut !== "prospect" && !deletedIds.includes(c.id)) m[c.dept] = (m[c.dept] || 0) + 1; });
     return Object.entries(m).sort((a, b) => b[1] - a[1]).slice(0, 12);
-  }, [clients]);
+  }, [clients, deletedIds]);
   const maxDeptCount = Math.max(...deptCounts.map((d) => d[1]), 1);
 
   if (loading && rawClients.length === 0) {
@@ -1822,6 +1849,23 @@ function SuiviClientsApp({ onLogout }) {
 
                   <ClientNotesPanel client={selected} onClientUpdated={() => setReloadKey((k) => k + 1)} />
 
+                  {(() => {
+                    const insights = buildClientInsights(selected, monthsOrder);
+                    if (insights.length === 0) return null;
+                    return (
+                      <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 8, background: PALETTE.rustBg, border: "1px solid #E3C7BC" }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: PALETTE.rust, marginBottom: 4 }}>A surveiller</div>
+                        <ul style={{ margin: 0, paddingLeft: 18 }}>
+                          {insights.map((ins, i) => (
+                            <li key={i} style={{ fontSize: 12, color: "#7A3624", marginBottom: 2 }}>
+                              N'achete plus de <strong>{ins.cat}</strong> depuis {ins.monthsSince} mois (derniere commande : {ins.lastLabel})
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })()}
+
                   <div style={{ fontSize: 13, fontWeight: 600, color: PALETTE.ink, marginBottom: 8, marginTop: 18 }}>
                     Produits commandes ({selected.prod.length}) &middot; historique {monthsOrder.length} mois
                   </div>
@@ -1905,7 +1949,7 @@ function SuiviClientsApp({ onLogout }) {
 
           <div style={{ background: PALETTE.paper, border: "1px solid " + PALETTE.line, borderRadius: 12, padding: 16, marginTop: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: PALETTE.ink }}>Repartition des clients par departement (top 12)</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: PALETTE.ink }}>Repartition des vrais clients par departement (top 12, hors prospects)</div>
               <div style={{ fontSize: 11.5, color: PALETTE.inkSoft }}>Carte geographique activee des reception des adresses geocodees</div>
             </div>
             <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
