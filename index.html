@@ -158,7 +158,7 @@ async function sbUpsert(table, rows, conflictCols) {
   }
 }
 
-const BUILD_VERSION = "20260909-1556";
+const BUILD_VERSION = "20260909-1602";
 
 const SOCIETE = {
   nom: "Les Celliers Bretons",
@@ -1537,7 +1537,7 @@ function buildTarifsClient(clientId, commandes, catalogue) {
   const byProduct = {};
   commandes.forEach((r) => {
     if (r.client_nom_norm !== clientId || !r.quantite) return;
-    if (!byProduct[r.code_produit]) byProduct[r.code_produit] = { nom: r.designation, paidQty: 0, paidMontant: 0, freeQty: 0 };
+    if (!byProduct[r.code_produit]) byProduct[r.code_produit] = { nom: r.designation, paidQty: 0, paidMontant: 0, freeQty: 0, lastPaid: null };
     const pu = r.montant / r.quantite;
     const entry = byProduct[r.code_produit];
     if (pu < CONSIGNE_SEUIL) {
@@ -1545,6 +1545,10 @@ function buildTarifsClient(clientId, commandes, catalogue) {
     } else {
       entry.paidQty += r.quantite;
       entry.paidMontant += r.montant;
+      // on garde la ligne la plus recente au tarif normal, pour afficher le prix paye "maintenant"
+      if (!entry.lastPaid || r.annee > entry.lastPaid.annee || (r.annee === entry.lastPaid.annee && r.mois > entry.lastPaid.mois)) {
+        entry.lastPaid = { annee: r.annee, mois: r.mois, prixUnite: pu };
+      }
     }
   });
 
@@ -1553,15 +1557,20 @@ function buildTarifsClient(clientId, commandes, catalogue) {
     const qteCarton = cat ? (cat.qte_carton || 1) : 1;
     const prixGeneralUnite = cat ? (cat.prix_unitaire_ht || (cat.prix_ht / qteCarton)) : null;
     const prixDedieUnite = cat && cat.tarif_dedie ? cat.prix_unitaire_dedie : null;
-    const prixPayeUnite = d.paidQty > 0 ? d.paidMontant / (d.paidQty * qteCarton) : null;
+    // prix paye = celui de la commande la plus recente au tarif normal, pas une moyenne
+    const prixPayeUnite = d.lastPaid ? d.lastPaid.prixUnite / qteCarton : null;
+    const lastLabel = d.lastPaid ? monthLabel(d.lastPaid.annee, d.lastPaid.mois) : null;
 
     let type = "standard";
     let remisePct = 0;
+    let auDessus = false;
     if (prixPayeUnite != null && prixDedieUnite && Math.abs(prixPayeUnite - prixDedieUnite) / prixDedieUnite < 0.03) {
       type = "brasserie";
     } else if (prixPayeUnite != null && prixGeneralUnite > 0 && prixPayeUnite < prixGeneralUnite * 0.97) {
       type = "privilegie";
       remisePct = (1 - prixPayeUnite / prixGeneralUnite) * 100;
+    } else if (prixPayeUnite != null && prixGeneralUnite > 0 && prixPayeUnite > prixGeneralUnite * 1.03) {
+      auDessus = true;
     }
 
     let gratuite = null;
@@ -1572,7 +1581,7 @@ function buildTarifsClient(clientId, commandes, catalogue) {
       gratuite = { label: null, paidQty: 0, freeQty: d.freeQty };
     }
 
-    return { code, nom: d.nom, prixPayeUnite, prixGeneralUnite, prixDedieUnite, type, remisePct, gratuite };
+    return { code, nom: d.nom, prixPayeUnite, prixGeneralUnite, prixDedieUnite, type, remisePct, gratuite, lastLabel, auDessus };
   }).filter((x) => x.prixPayeUnite != null || x.gratuite);
 }
 
@@ -2062,8 +2071,8 @@ function SuiviClientsApp({ onLogout }) {
                               <div style={{ fontSize: 12.5, fontWeight: 500, color: PALETTE.ink }}>{t.nom}</div>
                               {t.prixPayeUnite != null && (
                                 <div style={{ fontSize: 11, color: PALETTE.inkSoft }}>
-                                  Paye : {fmtEuro(t.prixPayeUnite)} / unite
-                                  {t.prixGeneralUnite ? " (tarif general : " + fmtEuro(t.prixGeneralUnite) + ")" : ""}
+                                  Paye : {fmtEuro(t.prixPayeUnite)} / unite (derniere facture : {t.lastLabel})
+                                  {t.prixGeneralUnite ? " \u00b7 tarif general actuel : " + fmtEuro(t.prixGeneralUnite) : ""}
                                 </div>
                               )}
                             </div>
@@ -2076,6 +2085,11 @@ function SuiviClientsApp({ onLogout }) {
                                   Tarif privilegie : -{t.remisePct.toFixed(0)}%
                                 </span>
                               )}
+                              {t.auDessus && (
+                                <span title="Le prix de la derniere facture est superieur au tarif general actuel du catalogue" style={{ fontSize: 11, background: "#F3E2DC", color: PALETTE.rust, padding: "3px 10px", borderRadius: 20, fontWeight: 600 }}>
+                                  Au-dessus du tarif catalogue
+                                </span>
+                              )}
                               {t.gratuite && t.gratuite.label && (
                                 <span title={t.gratuite.paidQty + " cartons payes, " + t.gratuite.freeQty + " offerts sur tout l'historique"} style={{ fontSize: 11, background: "#F7EFD9", color: "#8A6425", padding: "3px 10px", borderRadius: 20, fontWeight: 600 }}>
                                   Gratuite : {t.gratuite.label}
@@ -2086,7 +2100,7 @@ function SuiviClientsApp({ onLogout }) {
                                   {t.gratuite.freeQty} carton(s) consigne seule
                                 </span>
                               )}
-                              {t.type === "standard" && !t.gratuite && (
+                              {t.type === "standard" && !t.auDessus && !t.gratuite && (
                                 <span style={{ fontSize: 11, color: PALETTE.inkSoft }}>Tarif standard</span>
                               )}
                             </div>
