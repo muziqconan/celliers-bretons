@@ -158,7 +158,7 @@ async function sbUpsert(table, rows, conflictCols) {
   }
 }
 
-const BUILD_VERSION = "20260910-1203";
+const BUILD_VERSION = "20260910-1437";
 
 const SOCIETE = {
   nom: "Les Celliers Bretons",
@@ -1688,19 +1688,25 @@ function buildTarifsClient(clientId, commandes, catalogue, monthsOrder) {
     let remisePct = 0;
     let auDessus = false;
     let tarifPerime = false;
+    const monthsOld = lastGlobalMonth && d.lastPaid
+      ? (lastGlobalMonth.y - d.lastPaid.annee) * 12 + (lastGlobalMonth.m - d.lastPaid.mois)
+      : 0;
+    const ecartPct = prixPayeUnite != null && prixGeneralUnite > 0 ? Math.abs(prixPayeUnite - prixGeneralUnite) / prixGeneralUnite : 0;
+
     if (prixPayeUnite != null && prixDedieUnite && Math.abs(prixPayeUnite - prixDedieUnite) / prixDedieUnite < 0.03) {
       type = "brasserie";
-    } else if (prixPayeUnite != null && prixGeneralUnite > 0 && prixPayeUnite < prixGeneralUnite * 0.97) {
+    } else if (prixPayeUnite != null && prixGeneralUnite > 0 && ecartPct < 0.005) {
+      // match quasi parfait avec le tarif general : rien de particulier a signaler
+      type = "standard";
+    } else if (prixPayeUnite != null && prixGeneralUnite > 0 && monthsOld >= 2) {
+      // commande ancienne : impossible de dire avec certitude si l'ecart est une vraie remise
+      // ou juste que le tarif catalogue a bouge depuis (dans un sens ou dans l'autre)
+      tarifPerime = true;
+    } else if (prixPayeUnite != null && prixGeneralUnite > 0 && prixPayeUnite < prixGeneralUnite) {
       type = "privilegie";
       remisePct = (1 - prixPayeUnite / prixGeneralUnite) * 100;
-    } else if (prixPayeUnite != null && prixGeneralUnite > 0 && prixPayeUnite > prixGeneralUnite * 1.03) {
-      // le prix d'origine ne correspond plus au tarif actuel : ca peut etre une vraie majoration,
-      // ou juste que la derniere commande date d'avant une baisse generale du tarif catalogue.
-      const monthsOld = lastGlobalMonth && d.lastPaid
-        ? (lastGlobalMonth.y - d.lastPaid.annee) * 12 + (lastGlobalMonth.m - d.lastPaid.mois)
-        : 0;
-      if (monthsOld >= 2) tarifPerime = true;
-      else auDessus = true;
+    } else if (prixPayeUnite != null && prixGeneralUnite > 0 && prixPayeUnite > prixGeneralUnite) {
+      auDessus = true;
     }
 
     let gratuite = null;
@@ -2374,9 +2380,6 @@ function SuiviClientsApp({ onLogout }) {
                                 <span title={t.gratuite.freeQty + " cartons a prix consigne seule, jamais achete a prix plein sur la periode"} style={{ fontSize: 11, background: "#F7EFD9", color: "#8A6425", padding: "3px 10px", borderRadius: 20, fontWeight: 600 }}>
                                   {t.gratuite.freeQty} carton(s) consigne seule
                                 </span>
-                              )}
-                              {t.type === "standard" && !t.auDessus && !t.tarifPerime && !t.gratuite && (
-                                <span style={{ fontSize: 11, color: PALETTE.inkSoft }}>Tarif standard</span>
                               )}
                             </div>
                           </div>
