@@ -158,7 +158,7 @@ async function sbUpsert(table, rows, conflictCols) {
   }
 }
 
-const BUILD_VERSION = "20260909-1602";
+const BUILD_VERSION = "20260910-1030";
 
 const SOCIETE = {
   nom: "Les Celliers Bretons",
@@ -298,6 +298,10 @@ function ClientNotesPanel({ client, onClientUpdated }) {
   const [form, setForm] = useState({ rue: "", cp: "", tel: "", mob: "", email: "", gerant: "", nom_public: "", commercial: "" });
   const [visitDate, setVisitDate] = useState(todayStr());
   const [visitObs, setVisitObs] = useState("");
+  const [editingVisitIdx, setEditingVisitIdx] = useState(null);
+  const [showTransaction, setShowTransaction] = useState(false);
+  const [transactionForm, setTransactionForm] = useState({ statut: "", ca: "", prix_vente: "", places: "", places_terrasse: "", loyer: "" });
+  const [transactionSaved, setTransactionSaved] = useState(false);
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef(null);
   const speechSupported = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -339,12 +343,21 @@ function ClientNotesPanel({ client, onClientUpdated }) {
     setEditing(false);
     (async () => {
       try {
-        const rows = await sbFetch("client_notes?client_nom_norm=eq." + idEnc + "&select=overrides,visites");
+        const rows = await sbFetch("client_notes?client_nom_norm=eq." + idEnc + "&select=overrides,visites,transaction");
         const row = rows && rows[0];
         const overrides = (row && row.overrides) || {};
         const visites = (row && row.visites) || [];
+        const transaction = (row && row.transaction) || {};
         if (!cancelled) {
-          setNotes({ overrides, visites });
+          setNotes({ overrides, visites, transaction });
+          setTransactionForm({
+            statut: transaction.statut || "",
+            ca: transaction.ca ?? "",
+            prix_vente: transaction.prix_vente ?? "",
+            places: transaction.places ?? "",
+            places_terrasse: transaction.places_terrasse ?? "",
+            loyer: transaction.loyer ?? "",
+          });
           setForm({
             rue: overrides.rue ?? client.rue ?? "",
             cp: overrides.cp ?? client.cp ?? "",
@@ -358,7 +371,8 @@ function ClientNotesPanel({ client, onClientUpdated }) {
         }
       } catch (e) {
         if (!cancelled) {
-          setNotes({ overrides: {}, visites: [] });
+          setNotes({ overrides: {}, visites: [], transaction: {} });
+          setTransactionForm({ statut: "", ca: "", prix_vente: "", places: "", places_terrasse: "", loyer: "" });
           setForm({
             rue: client.rue || "", cp: client.cp || "", tel: client.tel || "",
             mob: client.mob || "", email: client.email || "", gerant: client.gerant || "",
@@ -376,7 +390,7 @@ function ClientNotesPanel({ client, onClientUpdated }) {
     await sbFetch("client_notes", {
       method: "POST",
       headers: { Prefer: "resolution=merge-duplicates" },
-      body: JSON.stringify([{ client_nom_norm: client.nom_norm, overrides: updated.overrides, visites: updated.visites }]),
+      body: JSON.stringify([{ client_nom_norm: client.nom_norm, overrides: updated.overrides, visites: updated.visites, transaction: updated.transaction || {} }]),
     });
   }
 
@@ -401,12 +415,66 @@ function ClientNotesPanel({ client, onClientUpdated }) {
   async function addVisit() {
     if (!visitDate) { setSaveError("Choisissez une date de visite."); return; }
     const visite = { date: visitDate, observations: visitObs.trim() };
-    const updated = { ...notes, visites: [visite, ...(notes.visites || [])] };
+    let newVisites;
+    if (editingVisitIdx !== null) {
+      newVisites = [...(notes.visites || [])];
+      newVisites[editingVisitIdx] = visite;
+    } else {
+      newVisites = [visite, ...(notes.visites || [])];
+    }
+    const updated = { ...notes, visites: newVisites };
     try {
       await persist(updated);
       setNotes(updated);
       setVisitObs("");
       setVisitDate(todayStr());
+      setEditingVisitIdx(null);
+      setSaveError("");
+    } catch (e) {
+      setSaveError("Enregistrement impossible, reessayez.");
+    }
+  }
+
+  function startEditVisit(idx) {
+    const v = notes.visites[idx];
+    setVisitDate(v.date);
+    setVisitObs(v.observations || "");
+    setEditingVisitIdx(idx);
+  }
+
+  function cancelEditVisit() {
+    setVisitDate(todayStr());
+    setVisitObs("");
+    setEditingVisitIdx(null);
+  }
+
+  async function deleteVisit(idx) {
+    const newVisites = (notes.visites || []).filter((_, i) => i !== idx);
+    const updated = { ...notes, visites: newVisites };
+    try {
+      await persist(updated);
+      setNotes(updated);
+      if (editingVisitIdx === idx) cancelEditVisit();
+    } catch (e) {
+      setSaveError("Suppression impossible, reessayez.");
+    }
+  }
+
+  async function saveTransaction() {
+    const transaction = {
+      statut: transactionForm.statut || null,
+      ca: transactionForm.ca === "" ? null : Number(transactionForm.ca),
+      prix_vente: transactionForm.prix_vente === "" ? null : Number(transactionForm.prix_vente),
+      places: transactionForm.places === "" ? null : Number(transactionForm.places),
+      places_terrasse: transactionForm.places_terrasse === "" ? null : Number(transactionForm.places_terrasse),
+      loyer: transactionForm.loyer === "" ? null : Number(transactionForm.loyer),
+    };
+    const updated = { ...notes, transaction };
+    try {
+      await persist(updated);
+      setNotes(updated);
+      setTransactionSaved(true);
+      setTimeout(() => setTransactionSaved(false), 1500);
       setSaveError("");
     } catch (e) {
       setSaveError("Enregistrement impossible, reessayez.");
@@ -477,7 +545,8 @@ function ClientNotesPanel({ client, onClientUpdated }) {
             onClick={toggleDictation}
             title={listening ? "Arreter la dictee" : "Dicter au micro"}
             style={{
-              fontSize: 14, padding: "7px 12px", borderRadius: 7, cursor: "pointer",
+              fontSize: 14, padding: "0 12px", height: 38, borderRadius: 19, cursor: "pointer",
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
               border: "1px solid " + (listening ? PALETTE.rust : PALETTE.line),
               background: listening ? PALETTE.rust : "transparent",
               color: listening ? "#fff" : PALETTE.inkSoft,
@@ -486,7 +555,10 @@ function ClientNotesPanel({ client, onClientUpdated }) {
             {listening ? "\u23f9 Enregistrement..." : "\ud83c\udfa4 Dicter"}
           </button>
         )}
-        <button onClick={addVisit} style={primaryBtnStyle}>Ajouter</button>
+        <button onClick={addVisit} style={primaryBtnStyle}>{editingVisitIdx !== null ? "Enregistrer" : "Ajouter"}</button>
+        {editingVisitIdx !== null && (
+          <button onClick={cancelEditVisit} style={secondaryBtnStyle}>Annuler</button>
+        )}
       </div>
 
       <div style={{ maxHeight: 150, overflowY: "auto" }}>
@@ -494,11 +566,42 @@ function ClientNotesPanel({ client, onClientUpdated }) {
           <div style={{ fontSize: 12, color: PALETTE.inkSoft }}>Pas encore de visite enregistree pour ce client.</div>
         )}
         {(notes.visites || []).map((v, i) => (
-          <div key={i} style={{ borderLeft: "2px solid " + PALETTE.gold, paddingLeft: 10, marginBottom: 8 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: PALETTE.ink }}>{v.date}</div>
-            <div style={{ fontSize: 12, color: PALETTE.inkSoft }}>{v.observations || "(sans observation)"}</div>
+          <div key={i} style={{ borderLeft: "2px solid " + (editingVisitIdx === i ? PALETTE.rust : PALETTE.gold), paddingLeft: 10, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: PALETTE.ink }}>{v.date}</div>
+              <div style={{ fontSize: 12, color: PALETTE.inkSoft }}>{v.observations || "(sans observation)"}</div>
+            </div>
+            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+              <button onClick={() => startEditVisit(i)} title="Modifier" style={{ fontSize: 11, background: "transparent", border: "none", color: PALETTE.inkSoft, cursor: "pointer", padding: "2px 4px" }}>
+                &#9998;
+              </button>
+              <button onClick={() => deleteVisit(i)} title="Supprimer" style={{ fontSize: 11, background: "transparent", border: "none", color: PALETTE.rust, cursor: "pointer", padding: "2px 4px" }}>
+                &#10005;
+              </button>
+            </div>
           </div>
         ))}
+      </div>
+
+      <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid " + PALETTE.line }}>
+        <button onClick={() => setShowTransaction((v) => !v)} style={secondaryBtnStyle}>
+          {notes.transaction && notes.transaction.statut ? (notes.transaction.statut === "a_vendre" ? "\ud83c\udff7\ufe0f A vendre" : "\ud83d\udcb0 Achetee") + " \u2014 Transaction" : "Transaction"}
+        </button>
+        {showTransaction && (
+          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+            <select value={transactionForm.statut} onChange={(e) => setTransactionForm({ ...transactionForm, statut: e.target.value })} style={inputStyle}>
+              <option value="">Aucune transaction</option>
+              <option value="a_vendre">A vendre</option>
+              <option value="achete">Achetee</option>
+            </select>
+            <input type="number" placeholder="Chiffre d'affaires (EUR)" value={transactionForm.ca} onChange={(e) => setTransactionForm({ ...transactionForm, ca: e.target.value })} style={inputStyle} />
+            <input type="number" placeholder="Prix de vente (EUR)" value={transactionForm.prix_vente} onChange={(e) => setTransactionForm({ ...transactionForm, prix_vente: e.target.value })} style={inputStyle} />
+            <input type="number" placeholder="Nombre de places (salle)" value={transactionForm.places} onChange={(e) => setTransactionForm({ ...transactionForm, places: e.target.value })} style={inputStyle} />
+            <input type="number" placeholder="Nombre de places en terrasse" value={transactionForm.places_terrasse} onChange={(e) => setTransactionForm({ ...transactionForm, places_terrasse: e.target.value })} style={inputStyle} />
+            <input type="number" placeholder="Loyer mensuel (EUR)" value={transactionForm.loyer} onChange={(e) => setTransactionForm({ ...transactionForm, loyer: e.target.value })} style={inputStyle} />
+            <button onClick={saveTransaction} style={primaryBtnStyle}>{transactionSaved ? "Enregistre !" : "Enregistrer"}</button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1505,17 +1608,29 @@ function buildClientsWithOrders(clientsRaw, commandes, monthsOrder) {
     const prodMap = byClient[c.nom_norm] || {};
     const prod = Object.values(prodMap);
     let caPrimary = 0, caSecondary = 0;
+    let lastOrderIdx = null;
     for (const row of commandes) {
       if (row.client_nom_norm !== c.nom_norm) continue;
       if (row.annee === primaryYear) caPrimary += row.montant || 0;
       if (row.annee === secondaryYear) caSecondary += row.montant || 0;
+      if (row.quantite > 0) {
+        const idx = monthsOrder.findIndex((mo) => mo.y === row.annee && mo.m === row.mois);
+        if (idx >= 0 && (lastOrderIdx === null || idx > lastOrderIdx)) lastOrderIdx = idx;
+      }
     }
+    // La derniere commande reelle est recalculee depuis l'historique importe (fiable),
+    // pas depuis le champ "derniere_commande" importe une fois avec le fichier client (pouvait etre perime).
+    const joursDepuisReel = lastOrderIdx !== null
+      ? daysSince(monthsOrder[lastOrderIdx].y + "-" + String(monthsOrder[lastOrderIdx].m).padStart(2, "0") + "-28")
+      : daysSince(c.derniere_commande);
+    const dernierMoisLabel = lastOrderIdx !== null ? monthLabel(monthsOrder[lastOrderIdx].y, monthsOrder[lastOrderIdx].m) : null;
     return {
       ...c,
       id: c.nom_norm,
       prod,
       caPrimary, caSecondary,
-      joursDepuis: daysSince(c.derniere_commande),
+      joursDepuis: joursDepuisReel,
+      dernierMoisLabel,
       // un prospect qui a de vraies commandes (import) redevient automatiquement un client,
       // sans jamais avoir besoin de cliquer sur "Convertir"
       statut: c.statut === "prospect" && prod.length === 0 ? "prospect" : "client",
@@ -1530,9 +1645,10 @@ function gcd(a, b) { return b === 0 ? a : gcd(b, a % b); }
 // (carton offert, seul le depot du verre a ete facture) plutot qu'un vrai prix produit.
 const CONSIGNE_SEUIL = 2;
 
-function buildTarifsClient(clientId, commandes, catalogue) {
+function buildTarifsClient(clientId, commandes, catalogue, monthsOrder) {
   const catByCode = {};
   catalogue.forEach((p) => { catByCode[p.code] = p; });
+  const lastGlobalMonth = monthsOrder.length ? monthsOrder[monthsOrder.length - 1] : null;
 
   const byProduct = {};
   commandes.forEach((r) => {
@@ -1555,7 +1671,14 @@ function buildTarifsClient(clientId, commandes, catalogue) {
   return Object.entries(byProduct).map(([code, d]) => {
     const cat = catByCode[code];
     const qteCarton = cat ? (cat.qte_carton || 1) : 1;
-    const prixGeneralUnite = cat ? (cat.prix_unitaire_ht || (cat.prix_ht / qteCarton)) : null;
+    // La consigne verre n'est pas incluse dans le prix catalogue mais l'est sur les factures reelles :
+    // on l'ajoute au tarif general de reference pour comparer des choses comparables.
+    const designationRef = (d.nom || "").toUpperCase();
+    let consigneCarton = 0;
+    if (designationRef.includes("100CL") || designationRef.includes("1L ") || / 1L/.test(designationRef)) consigneCarton = 0.64;
+    else if (designationRef.includes("75CL")) consigneCarton = 0.48;
+    const prixGeneralUniteBase = cat ? (cat.prix_unitaire_ht || (cat.prix_ht / qteCarton)) : null;
+    const prixGeneralUnite = prixGeneralUniteBase != null ? prixGeneralUniteBase + consigneCarton / qteCarton : null;
     const prixDedieUnite = cat && cat.tarif_dedie ? cat.prix_unitaire_dedie : null;
     // prix paye = celui de la commande la plus recente au tarif normal, pas une moyenne
     const prixPayeUnite = d.lastPaid ? d.lastPaid.prixUnite / qteCarton : null;
@@ -1564,13 +1687,20 @@ function buildTarifsClient(clientId, commandes, catalogue) {
     let type = "standard";
     let remisePct = 0;
     let auDessus = false;
+    let tarifPerime = false;
     if (prixPayeUnite != null && prixDedieUnite && Math.abs(prixPayeUnite - prixDedieUnite) / prixDedieUnite < 0.03) {
       type = "brasserie";
     } else if (prixPayeUnite != null && prixGeneralUnite > 0 && prixPayeUnite < prixGeneralUnite * 0.97) {
       type = "privilegie";
       remisePct = (1 - prixPayeUnite / prixGeneralUnite) * 100;
     } else if (prixPayeUnite != null && prixGeneralUnite > 0 && prixPayeUnite > prixGeneralUnite * 1.03) {
-      auDessus = true;
+      // le prix d'origine ne correspond plus au tarif actuel : ca peut etre une vraie majoration,
+      // ou juste que la derniere commande date d'avant une baisse generale du tarif catalogue.
+      const monthsOld = lastGlobalMonth && d.lastPaid
+        ? (lastGlobalMonth.y - d.lastPaid.annee) * 12 + (lastGlobalMonth.m - d.lastPaid.mois)
+        : 0;
+      if (monthsOld >= 2) tarifPerime = true;
+      else auDessus = true;
     }
 
     let gratuite = null;
@@ -1581,7 +1711,7 @@ function buildTarifsClient(clientId, commandes, catalogue) {
       gratuite = { label: null, paidQty: 0, freeQty: d.freeQty };
     }
 
-    return { code, nom: d.nom, prixPayeUnite, prixGeneralUnite, prixDedieUnite, type, remisePct, gratuite, lastLabel, auDessus };
+    return { code, nom: d.nom, prixPayeUnite, prixGeneralUnite, prixDedieUnite, type, remisePct, gratuite, lastLabel, auDessus, tarifPerime };
   }).filter((x) => x.prixPayeUnite != null || x.gratuite);
 }
 
@@ -1640,9 +1770,11 @@ function SuiviClientsApp({ onLogout }) {
   const [commandes, setCommandes] = useState([]);
   const [monthsOrder, setMonthsOrder] = useState([]);
   const [deletedIds, setDeletedIds] = useState([]);
+  const [taches, setTaches] = useState([]);
+  const [nouvelleTache, setNouvelleTache] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
 
-  const [tab, setTab] = useState("clients");
+  const [tab, setTab] = useState("accueil");
   const [search, setSearch] = useState("");
   const [deptFilter, setDeptFilter] = useState("TOUS");
   const [commFilter, setCommFilter] = useState("TOUS");
@@ -1653,17 +1785,19 @@ function SuiviClientsApp({ onLogout }) {
   const [viewMode, setViewMode] = useState("actifs"); // actifs | sans_stats | prospects | supprimes
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [showTarifs, setShowTarifs] = useState(false);
+  const [showFiltres, setShowFiltres] = useState(false);
   useEffect(() => { setShowTarifs(false); }, [selectedId]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [clientsData, catalogueData, commandesData, deletedData] = await Promise.all([
+      const [clientsData, catalogueData, commandesData, deletedData, tachesData] = await Promise.all([
         sbFetchAll("clients?select=*&order=nom.asc"),
         sbFetchAll("produits_catalogue?select=*"),
         sbFetchAll("commandes_mensuelles?select=*"),
         sbFetchAll("deleted_clients?select=client_nom_norm"),
+        sbFetchAll("taches?select=*&order=cree_le.asc"),
       ]);
       const monthSet = {};
       commandesData.forEach((r) => { monthSet[r.annee + "-" + r.mois] = { y: r.annee, m: r.mois }; });
@@ -1674,6 +1808,7 @@ function SuiviClientsApp({ onLogout }) {
       setCommandes(commandesData);
       setMonthsOrder(months);
       setDeletedIds(deletedData.map((d) => d.client_nom_norm));
+      setTaches(tachesData);
     } catch (e) {
       setLoadError(e.message);
     } finally {
@@ -1758,6 +1893,27 @@ function SuiviClientsApp({ onLogout }) {
       setDeletedIds((prev) => prev.filter((x) => x !== id));
     } catch (e) {}
   }
+  async function ajouterTache() {
+    const texte = nouvelleTache.trim();
+    if (!texte) return;
+    try {
+      const inserted = await sbFetch("taches", {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify([{ texte }]),
+      });
+      setTaches((prev) => [...prev, ...(inserted || [])]);
+      setNouvelleTache("");
+    } catch (e) {}
+  }
+
+  async function supprimerTache(id) {
+    setTaches((prev) => prev.filter((t) => t.id !== id));
+    try {
+      await sbFetch("taches?id=eq." + id, { method: "DELETE" });
+    } catch (e) {}
+  }
+
   async function convertProspect(id) {
     try {
       await sbFetch("clients?nom_norm=eq." + encodeURIComponent(id), {
@@ -1768,9 +1924,9 @@ function SuiviClientsApp({ onLogout }) {
     } catch (e) {}
   }
 
-  const nbAlertes = clients.filter((c) => c.joursDepuis !== null && c.joursDepuis >= alertThreshold).length;
-  const nbP1 = clients.filter((c) => c.commission === "P1").length;
-  const nbP3 = clients.filter((c) => c.commission === "P3").length;
+  const nbAlertes = clients.filter((c) => !deletedIds.includes(c.id) && c.statut !== "prospect" && c.prod.length > 0 && c.joursDepuis !== null && c.joursDepuis >= alertThreshold).length;
+  const nbP1 = clients.filter((c) => !deletedIds.includes(c.id) && c.statut !== "prospect" && c.commission === "P1").length;
+  const nbP3 = clients.filter((c) => !deletedIds.includes(c.id) && c.statut !== "prospect" && c.commission === "P3").length;
 
   const primaryYear = monthsOrder.length ? Math.max(...monthsOrder.map((m) => m.y)) : null;
   const secondaryYear = primaryYear ? primaryYear - 1 : null;
@@ -1830,7 +1986,7 @@ function SuiviClientsApp({ onLogout }) {
       </div>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
-        {[{ id: "clients", label: "Clients" }, { id: "carte", label: "Carte" }, { id: "catalogue", label: "Catalogue produits" }, { id: "devis", label: "Proposition" }, { id: "import", label: "Importer" }].map((t) => (
+        {[{ id: "accueil", label: "Accueil" }, { id: "clients", label: "Clients" }, { id: "carte", label: "Carte" }, { id: "catalogue", label: "Catalogue produits" }, { id: "devis", label: "Proposition" }, { id: "import", label: "Importer" }].map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
             fontSize: 13, fontWeight: 500, padding: "8px 16px", borderRadius: 8,
             border: "1px solid " + (tab === t.id ? PALETTE.bottle : PALETTE.line),
@@ -1869,8 +2025,37 @@ function SuiviClientsApp({ onLogout }) {
       )}
       {tab === "catalogue" && <CataloguePane catalogue={catalogue} isMobile={isMobile} />}
       {tab === "devis" && <DevisPane catalogue={catalogue} clients={clients.filter((c) => !deletedIds.includes(c.id))} />}
-      {tab === "clients" && (
+      {tab === "accueil" && (
         <>
+          <div style={{ background: "#FBF3D5", border: "1px solid #E6D5A3", borderRadius: 16, padding: "14px 16px", marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#6B5220" }}>Taches</div>
+              <div style={{ fontSize: 11, color: "#8A6425" }}>{taches.length} en cours</div>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: taches.length > 0 ? 10 : 0, flexWrap: "wrap" }}>
+              <input
+                placeholder="Ajouter une tache..."
+                value={nouvelleTache}
+                onChange={(e) => setNouvelleTache(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && ajouterTache()}
+                style={{ ...inputStyle, flex: "1 1 200px", background: "#FFFDF5" }}
+              />
+              <button onClick={ajouterTache} style={primaryBtnStyle}>Ajouter</button>
+            </div>
+            {taches.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {taches.map((t) => (
+                  <div key={t.id} style={{ background: "#FFFDF5", border: "1px solid #E6D5A3", borderRadius: 10, padding: "8px 10px", display: "flex", alignItems: "center", gap: 8, maxWidth: 280 }}>
+                    <span style={{ fontSize: 12.5, color: "#4A3A10", wordBreak: "break-word" }}>{t.texte}</span>
+                    <button onClick={() => supprimerTache(t.id)} title="Traitee, retirer" style={{ fontSize: 13, background: "transparent", border: "none", color: "#8A6425", cursor: "pointer", flexShrink: 0, padding: 0, lineHeight: 1 }}>
+                      &#10003;
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 20 }}>
             {[
               { label: "Clients actifs", value: clients.filter((c) => !deletedIds.includes(c.id) && c.prod.length > 0).length },
@@ -1886,10 +2071,56 @@ function SuiviClientsApp({ onLogout }) {
             ))}
           </div>
 
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, 1fr)" : "repeat(5, 1fr)", gap: 10, marginBottom: 20 }}>
+            {[
+              { id: "clients", label: "Clients", icon: "\ud83d\udccb" },
+              { id: "carte", label: "Carte", icon: "\ud83d\uddfa\ufe0f" },
+              { id: "catalogue", label: "Catalogue", icon: "\ud83c\udf7a" },
+              { id: "devis", label: "Proposition", icon: "\ud83e\uddfe" },
+              { id: "import", label: "Importer", icon: "\u2b06\ufe0f" },
+            ].map((s) => (
+              <button key={s.id} onClick={() => setTab(s.id)} style={{
+                background: PALETTE.paper, border: "1px solid " + PALETTE.line, borderRadius: 14, padding: "18px 10px",
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 6, cursor: "pointer",
+              }}>
+                <span style={{ fontSize: 22 }}>{s.icon}</span>
+                <span style={{ fontSize: 12.5, fontWeight: 500, color: PALETTE.ink, fontFamily: "'Inter', sans-serif" }}>{s.label}</span>
+              </button>
+            ))}
+          </div>
+
+          <div style={{ background: PALETTE.paper, border: "1px solid " + PALETTE.line, borderRadius: 16, padding: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: PALETTE.ink }}>Repartition des vrais clients par departement (top 12, hors prospects)</div>
+              <div style={{ fontSize: 11.5, color: PALETTE.inkSoft }}>Carte geographique activee des reception des adresses geocodees</div>
+            </div>
+            <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+              {deptCounts.map(([dept, count]) => (
+                <div key={dept} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{ width: 60, fontSize: 12, color: PALETTE.inkSoft }}>Dept. {dept}</div>
+                  <div style={{ flex: 1, background: PALETTE.bg, borderRadius: 6, height: 14 }}>
+                    <div style={{ width: (count / maxDeptCount) * 100 + "%", background: PALETTE.bottle, height: "100%", borderRadius: 6 }} />
+                  </div>
+                  <div style={{ width: 26, fontSize: 12, textAlign: "right", color: PALETTE.ink }}>{count}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {tab === "clients" && (
+        <>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "minmax(0,1.5fr) minmax(0,1fr)", gap: 16 }}>
             <div style={{ background: PALETTE.paper, border: "1px solid " + PALETTE.line, borderRadius: 16, padding: 16 }}>
               <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-                <input type="text" placeholder="Rechercher un client ou une ville..." value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...inputStyle, flex: "1 1 200px" }} />
+                <input type="text" placeholder="Rechercher un client ou une ville..." enterKeyHint="search" value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...inputStyle, flex: "1 1 200px" }} />
+                {isMobile && (
+                  <button onClick={() => setShowFiltres((v) => !v)} style={secondaryBtnStyle}>
+                    {showFiltres ? "Masquer les filtres" : "Filtres"}
+                  </button>
+                )}
+                <div style={{ display: isMobile && !showFiltres ? "none" : "contents" }}>
                 <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)} style={inputStyle}>
                   <option value="TOUS">Tous departements</option>
                   {departements.map((d) => <option key={d} value={d}>Dept. {d}</option>)}
@@ -1911,12 +2142,15 @@ function SuiviClientsApp({ onLogout }) {
                   <option value="ville">Trier: ville</option>
                   <option value="ca">Trier: CA {primaryYear}</option>
                 </select>
+                </div>
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 12, color: PALETTE.inkSoft, whiteSpace: "nowrap" }}>Seuil d'alerte : {alertThreshold} jours sans commande</span>
-                <input type="range" min="7" max="180" step="1" value={alertThreshold} onChange={(e) => setAlertThreshold(Number(e.target.value))} style={{ flex: "1 1 120px", minWidth: 0 }} />
-              </div>
+              {(!isMobile || showFiltres) && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, color: PALETTE.inkSoft, whiteSpace: "nowrap" }}>Seuil d'alerte : {alertThreshold} jours sans commande</span>
+                  <input type="range" min="7" max="180" step="1" value={alertThreshold} onChange={(e) => setAlertThreshold(Number(e.target.value))} style={{ flex: "1 1 120px", minWidth: 0 }} />
+                </div>
+              )}
 
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
                 <div style={{ fontSize: 12, color: PALETTE.inkSoft }}>
@@ -2027,7 +2261,7 @@ function SuiviClientsApp({ onLogout }) {
 
                   <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8, background: selected.joursDepuis !== null && selected.joursDepuis >= alertThreshold ? PALETTE.rustBg : PALETTE.bg, border: "1px solid " + (selected.joursDepuis !== null && selected.joursDepuis >= alertThreshold ? "#E3C7BC" : PALETTE.line) }}>
                     <div style={{ fontSize: 12.5, fontWeight: 600, color: selected.joursDepuis !== null && selected.joursDepuis >= alertThreshold ? PALETTE.rust : PALETTE.ink }}>
-                      Derniere commande : {fmtDateFr(selected.derniere_commande)}{selected.joursDepuis !== null && " (" + selected.joursDepuis + " jours)"}
+                      Derniere commande : {selected.dernierMoisLabel || fmtDateFr(selected.derniere_commande)}{selected.joursDepuis !== null && " (" + selected.joursDepuis + " jours)"}
                     </div>
                     {selected.joursDepuis !== null && selected.joursDepuis >= alertThreshold && (
                       <div style={{ fontSize: 12, color: "#7A3624", marginTop: 2 }}>Au-dela du seuil de {alertThreshold} jours &mdash; client a relancer.</div>
@@ -2055,7 +2289,7 @@ function SuiviClientsApp({ onLogout }) {
                   )}
 
                   {showTarifs && (() => {
-                    const tarifs = buildTarifsClient(selected.id, commandes, catalogue);
+                    const tarifs = buildTarifsClient(selected.id, commandes, catalogue, monthsOrder);
                     if (tarifs.length === 0) {
                       return (
                         <div style={{ marginTop: 12, fontSize: 12, color: PALETTE.inkSoft, fontStyle: "italic" }}>
@@ -2090,6 +2324,11 @@ function SuiviClientsApp({ onLogout }) {
                                   Au-dessus du tarif catalogue
                                 </span>
                               )}
+                              {t.tarifPerime && (
+                                <span title="Cette commande date d'avant une evolution du tarif catalogue. Un nouveau prix s'appliquerait probablement a la prochaine commande." style={{ fontSize: 11, background: "#E7E9E1", color: PALETTE.inkSoft, padding: "3px 10px", borderRadius: 20, fontWeight: 600 }}>
+                                  Tarif d'avant le changement de prix
+                                </span>
+                              )}
                               {t.gratuite && t.gratuite.label && (
                                 <span title={t.gratuite.paidQty + " cartons payes, " + t.gratuite.freeQty + " offerts sur tout l'historique"} style={{ fontSize: 11, background: "#F7EFD9", color: "#8A6425", padding: "3px 10px", borderRadius: 20, fontWeight: 600 }}>
                                   Gratuite : {t.gratuite.label}
@@ -2100,7 +2339,7 @@ function SuiviClientsApp({ onLogout }) {
                                   {t.gratuite.freeQty} carton(s) consigne seule
                                 </span>
                               )}
-                              {t.type === "standard" && !t.auDessus && !t.gratuite && (
+                              {t.type === "standard" && !t.auDessus && !t.tarifPerime && !t.gratuite && (
                                 <span style={{ fontSize: 11, color: PALETTE.inkSoft }}>Tarif standard</span>
                               )}
                             </div>
@@ -2261,24 +2500,6 @@ function SuiviClientsApp({ onLogout }) {
               ) : (
                 <div style={{ color: PALETTE.inkSoft, fontSize: 13 }}>Selectionnez un client dans la liste.</div>
               )}
-            </div>
-          </div>
-
-          <div style={{ background: PALETTE.paper, border: "1px solid " + PALETTE.line, borderRadius: 16, padding: 16, marginTop: 16 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: PALETTE.ink }}>Repartition des vrais clients par departement (top 12, hors prospects)</div>
-              <div style={{ fontSize: 11.5, color: PALETTE.inkSoft }}>Carte geographique activee des reception des adresses geocodees</div>
-            </div>
-            <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
-              {deptCounts.map(([dept, count]) => (
-                <div key={dept} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div style={{ width: 60, fontSize: 12, color: PALETTE.inkSoft }}>Dept. {dept}</div>
-                  <div style={{ flex: 1, background: PALETTE.bg, borderRadius: 6, height: 14 }}>
-                    <div style={{ width: (count / maxDeptCount) * 100 + "%", background: PALETTE.bottle, height: "100%", borderRadius: 6 }} />
-                  </div>
-                  <div style={{ width: 26, fontSize: 12, textAlign: "right", color: PALETTE.ink }}>{count}</div>
-                </div>
-              ))}
             </div>
           </div>
         </>
