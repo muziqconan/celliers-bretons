@@ -158,7 +158,7 @@ async function sbUpsert(table, rows, conflictCols) {
   }
 }
 
-const BUILD_VERSION = "20260910-1155";
+const BUILD_VERSION = "20260910-1203";
 
 const SOCIETE = {
   nom: "Les Celliers Bretons",
@@ -1787,6 +1787,7 @@ function SuiviClientsApp({ onLogout }) {
   const [showTarifs, setShowTarifs] = useState(false);
   const [showFiltres, setShowFiltres] = useState(false);
   const [mobileVue, setMobileVue] = useState("liste"); // liste | fiche (mobile uniquement)
+  const [showInfos, setShowInfos] = useState(false);
   useEffect(() => { setShowTarifs(false); }, [selectedId]);
 
   const loadAll = useCallback(async () => {
@@ -1962,37 +1963,64 @@ function SuiviClientsApp({ onLogout }) {
 
   return (
     <div style={{ background: PALETTE.bg, color: PALETTE.ink, fontFamily: "'Inter', ui-sans-serif, -apple-system, sans-serif", minHeight: "100vh", padding: isMobile ? "14px" : "28px" }}>
-      <div style={{ marginBottom: 18 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 6, flexWrap: "wrap", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-            <img src={"data:image/png;base64," + LOGO_B64} alt="Logo" style={{ height: 52, width: "auto" }} />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-                <h1 style={{ fontFamily: "'Poppins', sans-serif", fontSize: 24, fontWeight: 600, margin: 0, color: PALETTE.bottleDark }}>
-                  Registre des comptoirs
-                </h1>
-                <span style={{ fontSize: 13, color: PALETTE.inkSoft }}>{SOCIETE.nom} &middot; connecte a la base en direct</span>
+      <div style={{ marginBottom: isMobile ? 10 : 18 }}>
+        {isMobile ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+              <img src={"data:image/png;base64," + LOGO_B64} alt="Logo" style={{ height: 30, width: "auto", flexShrink: 0 }} />
+              <div style={{ fontFamily: "'Poppins', sans-serif", fontSize: 15, fontWeight: 600, color: PALETTE.bottleDark, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                Registre des comptoirs
               </div>
-              <div style={{ height: 3, width: 64, background: PALETTE.gold, borderRadius: 2, margin: "6px 0" }} />
-              <div style={{ fontSize: 11.5, color: PALETTE.inkSoft }}>{SOCIETE.adresse} &middot; {SOCIETE.tel} &middot; {SOCIETE.email}</div>
-              <div style={{ fontSize: 10, color: PALETTE.line, marginTop: 2 }}>Version {BUILD_VERSION}</div>
             </div>
-          </div>
-          {onLogout && (
-            <button onClick={onLogout} style={{ fontSize: 11.5, background: "transparent", border: "1px solid " + PALETTE.line, borderRadius: 6, padding: "5px 10px", cursor: "pointer", color: PALETTE.inkSoft, flexShrink: 0 }}>
-              Se deconnecter
+            <button onClick={() => setShowInfos((v) => !v)} style={{ fontSize: 18, background: "transparent", border: "1px solid " + PALETTE.line, borderRadius: 8, width: 34, height: 34, cursor: "pointer", color: PALETTE.inkSoft, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              &#8942;
             </button>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 6, flexWrap: "wrap", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+              <img src={"data:image/png;base64," + LOGO_B64} alt="Logo" style={{ height: 52, width: "auto" }} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+                  <h1 style={{ fontFamily: "'Poppins', sans-serif", fontSize: 24, fontWeight: 600, margin: 0, color: PALETTE.bottleDark }}>
+                    Registre des comptoirs
+                  </h1>
+                  <span style={{ fontSize: 13, color: PALETTE.inkSoft }}>{SOCIETE.nom} &middot; connecte a la base en direct</span>
+                </div>
+                <div style={{ height: 3, width: 64, background: PALETTE.gold, borderRadius: 2, margin: "6px 0" }} />
+                <div style={{ fontSize: 11.5, color: PALETTE.inkSoft }}>{SOCIETE.adresse} &middot; {SOCIETE.tel} &middot; {SOCIETE.email}</div>
+                <div style={{ fontSize: 10, color: PALETTE.line, marginTop: 2 }}>Version {BUILD_VERSION}</div>
+              </div>
+            </div>
+            {onLogout && (
+              <button onClick={onLogout} style={{ fontSize: 11.5, background: "transparent", border: "1px solid " + PALETTE.line, borderRadius: 6, padding: "5px 10px", cursor: "pointer", color: PALETTE.inkSoft, flexShrink: 0 }}>
+                Se deconnecter
+              </button>
+            )}
+          </div>
+        )}
+        {isMobile && showInfos && (
+          <div style={{ marginTop: 10, background: PALETTE.paper, border: "1px solid " + PALETTE.line, borderRadius: 12, padding: 12, fontSize: 11.5, color: PALETTE.inkSoft, lineHeight: 1.7 }}>
+            <div>{SOCIETE.nom} &middot; connecte a la base en direct</div>
+            <div>{SOCIETE.adresse}</div>
+            <div>{SOCIETE.tel} &middot; {SOCIETE.email}</div>
+            <div style={{ marginTop: 4, color: PALETTE.line }}>Version {BUILD_VERSION}</div>
+            {onLogout && (
+              <button onClick={onLogout} style={{ ...secondaryBtnStyle, marginTop: 10, width: "100%" }}>
+                Se deconnecter
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
-      <div style={{ display: "flex", gap: 6, marginBottom: 18, flexWrap: "wrap" }}>
-        {[{ id: "accueil", label: "Accueil" }, { id: "clients", label: "Clients" }, { id: "carte", label: "Carte" }, { id: "catalogue", label: "Catalogue produits" }, { id: "devis", label: "Proposition" }, { id: "import", label: "Importer" }].map((t) => (
+      <div style={{ display: "flex", gap: 6, marginBottom: isMobile ? 12 : 18, flexWrap: isMobile ? "nowrap" : "wrap", overflowX: isMobile ? "auto" : "visible", WebkitOverflowScrolling: "touch", paddingBottom: isMobile ? 2 : 0 }}>
+        {[{ id: "accueil", label: "Accueil" }, { id: "clients", label: "Clients" }, { id: "carte", label: "Carte" }, { id: "catalogue", label: isMobile ? "Catalogue" : "Catalogue produits" }, { id: "devis", label: "Proposition" }, { id: "import", label: "Importer" }].map((t) => (
           <button key={t.id} onClick={() => setTab(t.id)} style={{
-            fontSize: 13, fontWeight: 500, padding: "8px 16px", borderRadius: 8,
+            fontSize: isMobile ? 12.5 : 13, fontWeight: 500, padding: isMobile ? "7px 12px" : "8px 16px", borderRadius: 8, flexShrink: 0,
             border: "1px solid " + (tab === t.id ? PALETTE.bottle : PALETTE.line),
             background: tab === t.id ? PALETTE.bottle : "transparent",
-            color: tab === t.id ? "#F4EFE4" : PALETTE.inkSoft, cursor: "pointer",
+            color: tab === t.id ? "#F4EFE4" : PALETTE.inkSoft, cursor: "pointer", whiteSpace: "nowrap",
           }}>
             {t.label}
           </button>
