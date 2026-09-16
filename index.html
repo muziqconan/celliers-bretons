@@ -160,7 +160,7 @@ async function sbUpsert(table, rows, conflictCols) {
   }
 }
 
-const BUILD_VERSION = "20260916-1127";
+const BUILD_VERSION = "20260916-1158";
 
 const SOCIETE = {
   nom: "Les Celliers Bretons",
@@ -2780,10 +2780,6 @@ function SuiviClients() {
 
   return <SuiviClientsApp onLogout={() => { authSignOut(); setSession(null); }} />;
 }
-
-
-const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<SuiviClients />);
 
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
